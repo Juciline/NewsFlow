@@ -15,6 +15,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -30,6 +31,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
         const res = await signInWithEmailAndPassword(auth, email, password);
         user = res.user;
       } else {
+        if (password !== confirmPassword) {
+          setError('As senhas não coincidem.');
+          setLoading(false);
+          return;
+        }
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(userCredential.user, { displayName: name });
         user = userCredential.user;
@@ -47,7 +53,16 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
       onClose();
     } catch (err: any) {
-      setError(err.message);
+      console.error(err);
+      if (err.code === 'auth/operation-not-allowed') {
+        setError('O cadastro por e-mail e senha não está habilitado no momento. Por favor, use o Google.');
+      } else if (err.code === 'auth/email-already-in-use') {
+        setError('Este e-mail já está em uso.');
+      } else if (err.code === 'auth/weak-password') {
+        setError('A senha deve ter pelo menos 6 caracteres.');
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -158,6 +173,23 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                   />
                 </div>
               </div>
+
+              {mode === 'register' && (
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Confirmar Senha</label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={14} />
+                    <input
+                      type="password"
+                      required
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      className="w-full bg-muted border border-border pl-10 pr-4 py-2 text-sm focus:border-blue-500 outline-none transition-all"
+                      placeholder="••••••••"
+                    />
+                  </div>
+                </div>
+              )}
 
               {error && <p className="text-red-500 text-[10px] font-medium">{error}</p>}
 

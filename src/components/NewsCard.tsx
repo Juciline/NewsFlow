@@ -1,8 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { ExternalLink, MessageSquare, Heart, Share2 } from 'lucide-react';
+import { Heart, Share2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface NewsCardProps {
@@ -73,7 +71,7 @@ const NewsCard: React.FC<NewsCardProps> = ({
             {title}
           </h3>
           <p className="text-base text-foreground/70 leading-relaxed font-serif font-light mb-6 line-clamp-3 italic">
-            "{summary}"
+            &quot;{summary}&quot;
           </p>
         </div>
 

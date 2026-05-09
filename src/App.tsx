@@ -12,7 +12,6 @@ import {
   X,
   User, 
   Sparkles, 
-  TrendingUp, 
   Settings,
   ChevronRight,
   Newspaper,
@@ -31,7 +30,7 @@ import PreferencesModal from './components/PreferencesModal';
 import ProfileModal from './components/ProfileModal';
 import { auth, db } from '@/lib/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, getDocFromServer } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 
 enum OperationType {
   CREATE = 'create',
@@ -203,41 +202,53 @@ export default function App() {
   });
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
+    const unsubAuth = onAuthStateChanged(auth, (u) => {
       setUser(u);
       if (!u && view === 'favorites') {
         setView('home');
       }
-      if (u) {
+    });
+    return () => unsubAuth();
+  }, [view]);
+
+  // Observer para dados do utilizador
+  useEffect(() => {
+    let unsubFavs: (() => void) | null = null;
+    let unsubPrefs: (() => void) | null = null;
+
+    if (user) {
       // Observer para favoritos
-      const favsRef = collection(db, 'users', u.uid, 'favorites');
-      const unsubFavs = onSnapshot(favsRef, (snapshot) => {
+      const favsRef = collection(db, 'users', user.uid, 'favorites');
+      unsubFavs = onSnapshot(favsRef, (snapshot) => {
         setFavorites(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       }, (error) => {
-        handleFirestoreError(error, OperationType.LIST, `users/${u.uid}/favorites`);
+        if (auth.currentUser?.uid === user.uid) {
+          handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/favorites`);
+        }
       });
 
       // Observer para preferências
-      const userRef = doc(db, 'users', u.uid);
-      const unsubPrefs = onSnapshot(userRef, (docSnap) => {
+      const userRef = doc(db, 'users', user.uid);
+      unsubPrefs = onSnapshot(userRef, (docSnap) => {
         if (docSnap.exists()) {
-          setUserPreferences(docSnap.data().preferences?.categories || []);
+          const data = docSnap.data();
+          setUserPreferences(data.preferences?.categories || []);
         }
       }, (error) => {
-        handleFirestoreError(error, OperationType.GET, `users/${u.uid}`);
+        if (auth.currentUser?.uid === user.uid) {
+          handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
+        }
       });
+    } else {
+      setFavorites([]);
+      setUserPreferences([]);
+    }
 
-        return () => {
-          unsubFavs();
-          unsubPrefs();
-        };
-      } else {
-        setFavorites([]);
-        setUserPreferences([]);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
+    return () => {
+      if (unsubFavs) unsubFavs();
+      if (unsubPrefs) unsubPrefs();
+    };
+  }, [user]);
 
   useEffect(() => {
     const root = window.document.documentElement;
@@ -987,7 +998,7 @@ export default function App() {
                   <div className="space-y-6">
                     <div>
                       <p className="text-lg leading-relaxed font-serif text-foreground/90 italic">
-                        "{briefingData.outlook}"
+                        &quot;{briefingData.outlook}&quot;
                       </p>
                     </div>
 

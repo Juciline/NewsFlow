@@ -2,14 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, User, Mail, Lock, Camera, Check, Loader2 } from 'lucide-react';
 import { auth, db } from '@/lib/firebase';
-import { updateProfile, updateEmail, updatePassword } from 'firebase/auth';
+import { User as FirebaseUser, updateProfile, updateEmail, updatePassword } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { cn } from '@/lib/utils';
 
 interface ProfileModalProps {
   isOpen: boolean;
   onClose: () => void;
-  user: any;
+  user: FirebaseUser | null;
 }
 
 const AVATARS = [
