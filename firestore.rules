@@ -1,11 +1,12 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default deny
+    // 0. Global Safety Net
     match /{document=**} {
       allow read, write: if false;
     }
 
+    // Primitives
     function isSignedIn() {
       return request.auth != null;
     }
@@ -18,16 +19,59 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    match /users/{userId} {
-      allow get: if isOwner(userId);
-      allow create: if isOwner(userId) && request.resource.data.keys().hasAll(['uid', 'email', 'createdAt', 'updatedAt']) 
-        && request.resource.data.uid == request.auth.uid;
-      allow update: if isOwner(userId) && request.resource.data.uid == resource.data.uid;
+    function incoming() {
+      return request.resource.data;
     }
 
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Users Collection ---
+    match /users/{userId} {
+      function isValidUser(data) {
+        return (data.get('email', '') is string && data.get('email', '').size() <= 128)
+          && (data.get('displayName', '') is string && data.get('displayName', '').size() <= 128)
+          && (data.get('photoURL', '') is string && data.get('photoURL', '').size() <= 512)
+          && (data.get('preferences', null) == null || (
+              data.preferences.get('categories', []) is list 
+              && data.preferences.get('categories', []).size() <= 20
+          ));
+      }
+
+      allow get: if isOwner(userId);
+      
+      allow create: if isOwner(userId) 
+        && isValidUser(incoming());
+      
+      allow update: if isOwner(userId)
+        && isValidUser(incoming())
+        && (
+            // Action: Update Profile
+            (incoming().diff(existing()).affectedKeys().hasAny(['displayName', 'photoURL', 'email', 'updatedAt'])) ||
+            // Action: Update Preferences
+            (incoming().diff(existing()).affectedKeys().hasOnly(['preferences', 'updatedAt']))
+        )
+        && (incoming().get('updatedAt', request.time) == request.time || !incoming().keys().hasAll(['updatedAt']));
+    }
+
+    // --- Favorites Subcollection ---
     match /users/{userId}/favorites/{favoriteId} {
-      allow list, get: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidId(favoriteId);
+      function isValidFavorite(data) {
+        return data.keys().hasAll(['articleId', 'title', 'link', 'userId'])
+          && data.userId == request.auth.uid
+          && data.articleId is string && data.articleId.size() <= 128
+          && data.title is string && data.title.size() <= 512
+          && data.link is string && data.link.size() <= 1024;
+      }
+
+      allow list: if isOwner(userId);
+      allow get: if isOwner(userId) && isValidId(favoriteId);
+      
+      allow create: if isOwner(userId) 
+        && isValidId(favoriteId)
+        && isValidFavorite(incoming());
+        
       allow delete: if isOwner(userId);
     }
   }

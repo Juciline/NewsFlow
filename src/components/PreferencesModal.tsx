@@ -2,8 +2,27 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Check, Bookmark } from 'lucide-react';
 import { db } from '@/lib/firebase';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { cn } from '@/lib/utils';
+import { auth } from '@/lib/firebase';
+
+enum OperationType {
+  WRITE = 'write',
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 interface PreferencesModalProps {
   isOpen: boolean;
@@ -35,11 +54,11 @@ const PreferencesModal: React.FC<PreferencesModalProps> = ({ isOpen, onClose, us
       const userRef = doc(db, 'users', userId);
       await setDoc(userRef, {
         preferences: { categories: selected },
-        updatedAt: new Date().toISOString()
+        updatedAt: serverTimestamp()
       }, { merge: true });
       onClose();
     } catch (error) {
-      console.error("Erro ao salvar preferências:", error);
+      handleFirestoreError(error, OperationType.WRITE, `users/${userId}`);
     } finally {
       setLoading(false);
     }

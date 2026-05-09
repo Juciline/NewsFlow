@@ -28,9 +28,47 @@ import NewsCard from './components/NewsCard';
 import NewsSkeleton from './components/NewsSkeleton';
 import AuthModal from './components/AuthModal';
 import PreferencesModal from './components/PreferencesModal';
+import ProfileModal from './components/ProfileModal';
 import { auth, db } from '@/lib/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, getDocFromServer } from 'firebase/firestore';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 const CATEGORY_MAP: Record<string, string> = {
   'Tudo': 'top',
@@ -55,6 +93,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isBriefingOpen, setIsBriefingOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [activeArticle, setActiveArticle] = useState<any>(null);
@@ -90,6 +129,32 @@ export default function App() {
   };
   const [isSearching, setIsSearching] = useState(false);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
+
+  const toggleCategoryDirectly = async (category: string) => {
+    if (!user) {
+      setIsAuthOpen(true);
+      return;
+    }
+
+    const newPrefs = userPreferences.includes(category)
+      ? userPreferences.filter(p => p !== category)
+      : [...userPreferences, category];
+
+    // Atualização otimista
+    setUserPreferences(newPrefs);
+
+    try {
+      const userRef = doc(db, 'users', user.uid);
+      await setDoc(userRef, {
+        preferences: {
+          categories: newPrefs
+        },
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+    }
+  };
 
   // Auto-scroll category into view
   useEffect(() => {
@@ -144,19 +209,23 @@ export default function App() {
         setView('home');
       }
       if (u) {
-        // Observer para favoritos
-        const favsRef = collection(db, 'users', u.uid, 'favorites');
-        const unsubFavs = onSnapshot(favsRef, (snapshot) => {
-          setFavorites(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        });
+      // Observer para favoritos
+      const favsRef = collection(db, 'users', u.uid, 'favorites');
+      const unsubFavs = onSnapshot(favsRef, (snapshot) => {
+        setFavorites(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, `users/${u.uid}/favorites`);
+      });
 
-        // Observer para preferências
-        const userRef = doc(db, 'users', u.uid);
-        const unsubPrefs = onSnapshot(userRef, (docSnap) => {
-          if (docSnap.exists()) {
-            setUserPreferences(docSnap.data().preferences?.categories || []);
-          }
-        });
+      // Observer para preferências
+      const userRef = doc(db, 'users', u.uid);
+      const unsubPrefs = onSnapshot(userRef, (docSnap) => {
+        if (docSnap.exists()) {
+          setUserPreferences(docSnap.data().preferences?.categories || []);
+        }
+      }, (error) => {
+        handleFirestoreError(error, OperationType.GET, `users/${u.uid}`);
+      });
 
         return () => {
           unsubFavs();
@@ -351,12 +420,22 @@ export default function App() {
                       <HeartIcon size={18} fill={view === 'favorites' ? "currentColor" : "none"} />
                     </button>
                     <div className="flex items-center gap-3 pl-4 border-l border-border">
-                      <div className="hidden sm:block text-right">
-                        <div className="text-[10px] font-bold uppercase tracking-widest text-foreground">{user.displayName || 'Utilizador'}</div>
-                        <button onClick={() => signOut(auth)} className="text-[9px] font-bold text-muted-foreground hover:text-red-500 transition-colors uppercase tracking-widest">Sair</button>
+                      <div 
+                        className="hidden sm:block text-right cursor-pointer group"
+                        onClick={() => setIsProfileOpen(true)}
+                      >
+                        <div className="text-[10px] font-bold uppercase tracking-widest text-foreground group-hover:text-blue-500 transition-colors">{user.displayName || 'Utilizador'}</div>
+                        <button onClick={(e) => { e.stopPropagation(); signOut(auth); }} className="text-[9px] font-bold text-muted-foreground hover:text-red-500 transition-colors uppercase tracking-widest">Sair</button>
                       </div>
-                      <div className="w-10 h-10 bg-muted border border-border flex items-center justify-center font-serif font-bold text-blue-500">
-                        {user.displayName?.charAt(0) || user.email?.charAt(0).toUpperCase()}
+                      <div 
+                        className="w-10 h-10 bg-muted border border-border flex items-center justify-center font-serif font-bold text-blue-500 cursor-pointer overflow-hidden group hover:border-blue-500 transition-all"
+                        onClick={() => setIsProfileOpen(true)}
+                      >
+                        {user.photoURL ? (
+                          <img src={user.photoURL} alt={user.displayName} className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
+                        ) : (
+                          user.displayName?.charAt(0) || user.email?.charAt(0).toUpperCase()
+                        )}
                       </div>
                     </div>
                  </div>
@@ -476,23 +555,31 @@ export default function App() {
                 <h3 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-6">Suas Preferências</h3>
                 <div className="space-y-4">
                    {userPreferences.length > 0 ? (
-                     userPreferences.slice(0, 4).map(pref => (
+                     userPreferences.map(pref => (
                         <div key={pref} className="flex items-center justify-between">
-                          <span className="text-[11px] font-bold uppercase text-foreground/60">{pref}</span>
-                          <div className="w-8 h-4 bg-blue-500 rounded-none flex items-center justify-end px-0.5">
-                              <div className="w-3 h-3 bg-white" />
-                          </div>
+                          <span className="text-[11px] font-bold uppercase text-foreground">
+                            {pref}
+                          </span>
+                          <button 
+                            onClick={() => toggleCategoryDirectly(pref)}
+                            className="relative w-10 h-5 bg-blue-500 px-0.5 flex items-center"
+                          >
+                             <motion.div 
+                               animate={{ x: 20 }}
+                               className="w-4 h-4 bg-white shadow-sm" 
+                             />
+                          </button>
                         </div>
                      ))
                    ) : (
-                     <p className="text-[10px] italic text-muted-foreground">Nenhuma preferência definida.</p>
+                     <p className="text-[10px] italic text-muted-foreground">Nenhum interesse selecionado.</p>
                    )}
                 </div>
                 <button 
                   onClick={() => user ? setIsPreferencesOpen(true) : setIsAuthOpen(true)}
                   className="w-full mt-8 py-3 bg-foreground text-background font-bold text-[10px] uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all"
                 >
-                  {user ? 'Ajustar Interesses' : 'Entrar para Customizar'}
+                  {user ? 'Ajustar Todos Interesses' : 'Entrar para Customizar'}
                 </button>
              </section>
           </aside>
@@ -627,6 +714,13 @@ export default function App() {
             initialPreferences={userPreferences}
           />
         )}
+        {user && (
+          <ProfileModal
+            isOpen={isProfileOpen}
+            onClose={() => setIsProfileOpen(false)}
+            user={user}
+          />
+        )}
 
         {/* Mobile Sidebar Menu */}
         <AnimatePresence>
@@ -698,6 +792,12 @@ export default function App() {
                             )}
                           >
                             <HeartIcon size={16} fill={view === 'favorites' ? "currentColor" : "none"} /> Favoritos
+                          </button>
+                          <button 
+                            onClick={() => { setIsProfileOpen(true); setIsMobileMenuOpen(false); }}
+                            className="w-full flex items-center gap-3 p-3 text-xs font-bold uppercase tracking-widest text-muted-foreground hover:bg-muted transition-colors"
+                          >
+                            <User size={16} /> Meu Perfil
                           </button>
                           <button 
                             onClick={() => { setIsPreferencesOpen(true); setIsMobileMenuOpen(false); }}

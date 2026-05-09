@@ -38,9 +38,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
       // Garantir documento do utilizador no Firestore
       const userRef = doc(db, 'users', user.uid);
       await setDoc(userRef, {
+        uid: user.uid,
         displayName: user.displayName || name,
         email: user.email,
-        updatedAt: serverTimestamp()
+        updatedAt: serverTimestamp(),
+        createdAt: serverTimestamp()
       }, { merge: true });
 
       onClose();
@@ -59,9 +61,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
       // Garantir documento do utilizador no Firestore
       const userRef = doc(db, 'users', user.uid);
       await setDoc(userRef, {
+        uid: user.uid,
         displayName: user.displayName,
         email: user.email,
-        updatedAt: serverTimestamp()
+        updatedAt: serverTimestamp(),
+        createdAt: serverTimestamp()
       }, { merge: true });
 
       onClose();
