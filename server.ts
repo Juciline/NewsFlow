@@ -263,6 +263,61 @@ async function startServer() {
     }
   });
 
+  // Novo endpoint para o Reader Mode (Modo Leitura)
+  app.post("/api/article-reader", async (req, res) => {
+    const { url } = req.body;
+    
+    if (!url) {
+      return res.status(400).json({ error: "URL é necessária." });
+    }
+
+    try {
+      const { load } = await import("cheerio");
+      const response = await axios.get(url, { 
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+      });
+      
+      const $ = load(response.data);
+      
+      // Limpeza básica
+      $('script, style, nav, footer, header, iframe, ads, .ads, #ads').remove();
+      
+      const title = $('h1').first().text().trim();
+      
+      // Estratégia simples de extração de conteúdo
+      // Procura por containers comuns de artigos
+      let content = '';
+      const contentSelectors = ['article', '.article-body', '.post-content', '.content', '#content', '.entry-content', '.story-body'];
+      
+      for (const selector of contentSelectors) {
+        const el = $(selector);
+        if (el.length > 0) {
+          content = el.find('p').map((i, p) => $(p).text().trim()).get().join('\n\n');
+          if (content.length > 200) break;
+        }
+      }
+
+      // Fallback: todos os parágrafos se não achou container específico
+      if (content.length < 200) {
+        content = $('p').map((i, p) => $(p).text().trim()).get().join('\n\n');
+      }
+
+      res.json({
+        title: title || "Sem Título",
+        content: content || "Não foi possível extrair o conteúdo deste artigo.",
+        author: $('meta[name="author"]').attr('content') || "Desconhecido",
+        date: $('meta[property="article:published_time"]').attr('content') || null
+      });
+
+    } catch (error: any) {
+      console.error("Erro no Reader Mode:", error.message);
+      res.status(500).json({ error: "Falha ao processar o artigo para leitura." });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

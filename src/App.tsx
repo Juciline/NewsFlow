@@ -57,12 +57,37 @@ export default function App() {
   const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
   const [isBriefingOpen, setIsBriefingOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [activeArticle, setActiveArticle] = useState<any>(null);
+  const [readingContent, setReadingContent] = useState<any>(null);
+  const [loadingReader, setLoadingReader] = useState(false);
   const [briefingData, setBriefingData] = useState<any>(null);
   const [loadingBriefing, setLoadingBriefing] = useState(false);
   const [userPreferences, setUserPreferences] = useState<string[]>([]);
   const [view, setView] = useState<'home' | 'favorites'>('home');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
+
+  // Reader Logic
+  const openReader = async (article: any) => {
+    setActiveArticle(article);
+    setLoadingReader(true);
+    setReadingContent(null);
+    try {
+      const response = await axios.post('/api/article-reader', { url: article.link });
+      setReadingContent(response.data);
+    } catch (e) {
+      console.error(e);
+      // Fallback: se falhar, define o conteúdo como o sumário original
+      setReadingContent({
+        title: article.title,
+        content: article.summary + "\n\n(Não foi possível carregar o texto completo automaticamente.)",
+        author: article.author,
+        date: article.pubDate
+      });
+    } finally {
+      setLoadingReader(false);
+    }
+  };
   const [isSearching, setIsSearching] = useState(false);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
 
@@ -364,7 +389,7 @@ export default function App() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               className="space-y-8 cursor-pointer"
-              onClick={() => heroArticle?.link && window.open(heroArticle.link, '_blank')}
+              onClick={() => openReader(heroArticle)}
             >
               <div className="relative aspect-[16/8] overflow-hidden grayscale-[0.3] hover:grayscale-0 transition-all duration-1000">
                 <img 
@@ -384,9 +409,19 @@ export default function App() {
                 
                 <div className="flex gap-12 items-start">
                   <div className="flex-1 space-y-6">
-                    <p className="text-lg md:text-xl font-serif font-light leading-relaxed text-foreground/80 italic line-clamp-3">
-                      "{heroArticle?.summary || 'Nations are rapidly pivoting from cloud dependence to domestic compute infrastructure, driven by strategic autonomy and long-term economic security needs.'}"
-                    </p>
+                    <div className="space-y-4">
+                      {(heroArticle?.summary || 'Nations are rapidly pivoting from cloud dependence to domestic compute infrastructure.').split('\n').filter((p: string) => p.trim() !== '').map((para: string, i: number) => (
+                        <p 
+                          key={i} 
+                          className={cn(
+                            "text-lg md:text-xl font-serif leading-relaxed text-foreground/80 line-clamp-4",
+                            i === 0 && "first-letter:text-5xl first-letter:font-black first-letter:mr-3 first-letter:float-left first-letter:text-foreground"
+                          )}
+                        >
+                          {para}
+                        </p>
+                      ))}
+                    </div>
                     <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                       <span>Por Redação NewsFlow</span>
                       <span className="w-1 h-1 rounded-full bg-border" />
@@ -558,7 +593,7 @@ export default function App() {
                         e.stopPropagation();
                         toggleFavorite(item);
                       }}
-                      onClick={() => item.link && window.open(item.link, '_blank')}
+                      onClick={() => openReader(item)}
                     />
                   ))
                 ) : (
@@ -693,6 +728,115 @@ export default function App() {
                    <div className="text-[9px] font-black uppercase tracking-[0.2em] text-muted-foreground/50">
                     © 2026 NEWSFLOW INTERACTIVE
                   </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Article Reader Modal */}
+        <AnimatePresence>
+          {activeArticle && (
+            <div className="fixed inset-0 z-[70] flex items-center justify-center p-0 sm:p-4">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setActiveArticle(null)}
+                className="absolute inset-0 bg-background/95 backdrop-blur-xl"
+              />
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 30 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 30 }}
+                className="relative w-full max-w-4xl bg-card border-x border-border h-full sm:h-[95vh] overflow-hidden flex flex-col sm:shadow-2xl sm:rounded-xl"
+              >
+                {/* Reader Header */}
+                <div className="flex items-center justify-between p-4 border-b border-border bg-card/80 backdrop-blur-md sticky top-0 z-10">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 bg-foreground text-background flex items-center justify-center font-serif font-black">N</div>
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground hidden sm:inline">Modo Leitura NewsFlow</span>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <a 
+                      href={activeArticle.link} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-[10px] font-bold uppercase tracking-widest text-blue-500 hover:underline"
+                    >
+                      Fonte Original
+                    </a>
+                    <button 
+                      onClick={() => setActiveArticle(null)}
+                      className="p-1 hover:bg-muted rounded-full transition-colors"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto px-6 py-10 md:px-16 md:py-20 custom-scrollbar">
+                  {loadingReader ? (
+                    <div className="max-w-2xl mx-auto space-y-8 animate-pulse">
+                      <div className="h-12 bg-muted rounded w-3/4" />
+                      <div className="space-y-4">
+                        <div className="h-4 bg-muted rounded w-full" />
+                        <div className="h-4 bg-muted rounded w-full" />
+                        <div className="h-4 bg-muted rounded w-2/3" />
+                      </div>
+                      <div className="h-64 bg-muted rounded w-full" />
+                    </div>
+                  ) : readingContent ? (
+                    <article className="max-w-2xl mx-auto">
+                      <header className="mb-12">
+                        <div className="flex items-center gap-2 mb-4">
+                          <span className="px-2 py-0.5 bg-blue-500/10 text-blue-500 text-[10px] font-bold uppercase tracking-widest">
+                            {activeArticle.category || activeArticle.tags?.[0] || 'Notícia'}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-widest">
+                            {new Date(activeArticle.publishedAt || activeArticle.pubDate).toLocaleDateString('pt-PT', { day: 'numeric', month: 'long', year: 'numeric' })}
+                          </span>
+                        </div>
+                        <h1 className="text-3xl md:text-5xl font-serif font-bold leading-tight mb-6">
+                          {readingContent.title || activeArticle.title}
+                        </h1>
+                        {readingContent.author && (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <User size={14} />
+                            <span>Por {readingContent.author}</span>
+                          </div>
+                        )}
+                      </header>
+
+                      <div className="prose prose-invert prose-lg max-w-none">
+                        {readingContent.content?.split('\n').filter((p: string) => p.trim() !== '').map((para: string, i: number) => (
+                          <p 
+                            key={i} 
+                            className={cn(
+                              "text-lg md:text-xl leading-relaxed text-foreground/90 font-serif mb-6",
+                              i === 0 && "first-letter:text-5xl first-letter:font-black first-letter:mr-3 first-letter:float-left"
+                            )}
+                          >
+                            {para}
+                          </p>
+                        ))}
+                      </div>
+
+                      <footer className="mt-16 pt-8 border-t border-border flex flex-col items-center gap-6">
+                        <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Fim da Transmissão</div>
+                        <button 
+                          onClick={() => setActiveArticle(null)}
+                          className="px-8 py-3 bg-foreground text-background font-bold text-[11px] uppercase tracking-[0.2em] hover:bg-blue-600 hover:text-white transition-all shadow-xl"
+                        >
+                          Voltar ao Feed Principal
+                        </button>
+                      </footer>
+                    </article>
+                  ) : (
+                    <div className="h-full flex items-center justify-center">
+                      <p className="font-serif italic text-muted-foreground">Erro ao carregar conteúdo estruturado.</p>
+                    </div>
+                  )}
                 </div>
               </motion.div>
             </div>
