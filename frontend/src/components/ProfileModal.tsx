@@ -33,7 +33,15 @@ const ProfileModal = ({ isOpen, onClose, user }: ProfileModalProps) => {
             </button>
             <div className="w-24 h-24 bg-muted border-4 border-border mx-auto mb-6 rounded-none overflow-hidden">
               {user.photoURL ? (
-                <img src={user.photoURL} alt={user.displayName} className="w-full h-full object-cover" />
+                <img 
+                  src={user.photoURL} 
+                  alt={user.displayName} 
+                  referrerPolicy="no-referrer" 
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || 'U')}&background=0D8ABC&color=fff`;
+                  }}
+                  className="w-full h-full object-cover" 
+                />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-3xl font-serif font-bold text-blue-500">
                   {user.displayName?.charAt(0) || user.email?.charAt(0).toUpperCase()}

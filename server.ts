@@ -17,7 +17,6 @@ async function startServer() {
   // Cache em memória usando a utility
   const newsCache = new SimpleCache<any>(15 * 60 * 1000); // 15 minutos
   const analysisCache = new SimpleCache<any>(24 * 60 * 60 * 1000); // 24 horas
-  const pendingAnalyses = new Map<string, Promise<any>>();
   
   // API Rota de Health Check
   app.get("/api/health", (req, res) => {
@@ -31,127 +30,6 @@ async function startServer() {
         analysis: analysisCache.size
       }
     });
-  });
-
-  // Novo endpoint de análise com cache e coalescência de requisições
-  app.post("/api/analyze", async (req, res) => {
-    const { title, content, link } = req.body;
-    const apiKey = process.env.GEMINI_API_KEY;
-
-    if (!title || !content) {
-      return res.status(400).json({ error: "Título e conteúdo são necessários." });
-    }
-
-    // Chave do cache baseada no link ou título
-    const analysisKey = link || title;
-    
-    // 1. Verificar Cache
-    const cached = analysisCache.get(analysisKey);
-    if (cached) {
-      return res.json(cached);
-    }
-
-    // 2. Coalescência de Requisições (evitar múltiplas chamadas simultâneas para o mesmo item)
-    if (pendingAnalyses.has(analysisKey)) {
-      try {
-        const result = await pendingAnalyses.get(analysisKey);
-        return res.json(result);
-      } catch (e) {
-        // Se falhar a pendente, tentamos de novo abaixo ou enviamos erro
-      }
-    }
-
-    if (!apiKey) {
-      return res.json({
-        title,
-        summary: content.slice(0, 150) + "...",
-        sentiment: "Neutro",
-        tags: ["Geral"]
-      });
-    }
-
-    // 3. Executar Análise
-    const analysisPromise = (async () => {
-      try {
-        const { GoogleGenAI, Type } = await import("@google/genai");
-        
-        // Se a chave for placeholder ou vazia, não tenta
-        if (!apiKey || apiKey.includes("YOUR_") || apiKey.length < 10) {
-          throw new Error("API Key inválida ou não configurada.");
-        }
-
-        const ai = new GoogleGenAI({ apiKey });
-        
-        const isComparison = title.includes("COMPARE COVERAGE:");
-        const prompt = isComparison 
-          ? `ESTA É UMA SOLICITAÇÃO DE COMPARAÇÃO DE COBERTURA.
-             Título: ${title.replace("COMPARE COVERAGE:", "")}
-             Instrução: ${content}
-
-             Forneça o seguinte em formato JSON, garantindo que TODO o texto de saída esteja em PORTUGUÊS:
-             1. O título do tópico original.
-             2. Uma síntese de cobertura comparativa de exatamente 3 frases.
-             3. Análise de sentimento geral do tópico (Positivo, Negativo ou Neutro).
-             4. Três tags de categorias relevantes.`
-          : `Analise a seguinte notícia:
-             Título Original: ${title}
-             Conteúdo Original: ${content}
-
-             Forneça o seguinte em formato JSON, garantindo que TODO o texto de saída esteja em PORTUGUÊS:
-             1. O título traduzido para Português (se necessário).
-             2. Um resumo neutro e traduzido de exatamente 2 frases.
-             3. Análise de sentimento (Positivo, Negativo ou Neutro).
-             4. Três tags de categorias relevantes em Português.`;
-
-        const response = await ai.models.generateContent({
-          model: "gemini-1.5-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING },
-                summary: { type: Type.STRING },
-                sentiment: { type: Type.STRING },
-                tags: { type: Type.ARRAY, items: { type: Type.STRING } },
-              },
-              required: ["title", "summary", "sentiment", "tags"],
-            },
-          },
-        });
-
-        const result = JSON.parse(response.text);
-        analysisCache.set(analysisKey, result);
-        return result;
-      } catch (error: any) {
-        // Log simplificado se for apenas chave inválida para não poluir o terminal
-        if (error.message?.includes("key not valid") || error.message?.includes("não configurada")) {
-          console.warn(`[Gemini Skip] ${analysisKey}: API Key ausente ou inválida.`);
-        } else {
-          console.error(`[Gemini Error] ${analysisKey}:`, error.message);
-        }
-        throw error;
-      } finally {
-        pendingAnalyses.delete(analysisKey);
-      }
-    })();
-
-    pendingAnalyses.set(analysisKey, analysisPromise);
-
-    try {
-      const result = await analysisPromise;
-      res.json(result);
-    } catch (error: any) {
-      // Fallback amigável em caso de erro (incluindo 429)
-      const fallback = {
-        title,
-        summary: content.slice(0, 150) + "...",
-        sentiment: "Neutro",
-        tags: ["Atualidades"]
-      };
-      res.json(fallback);
-    }
   });
 
   // Rota para buscar notícias (integraçao com CurrentsAPI)
@@ -343,59 +221,6 @@ async function startServer() {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
-
-  // Novo endpoint para Briefing Diário
-  app.post("/api/briefing", async (req, res) => {
-    const { articles } = req.body;
-    const apiKey = process.env.GEMINI_API_KEY;
-
-    if (!articles || !Array.isArray(articles) || articles.length === 0) {
-      return res.status(400).json({ error: "Artigos são necessários para o briefing." });
-    }
-
-    if (!apiKey) {
-      return res.json({
-        outlook: "O NewsFlow está operando em modo offline. O mundo continua em movimento com notícias em diversas categorias.",
-        highlights: "Fique atento às atualizações em Tecnologia e Geopolítica.",
-        recommendation: "Explore as abas individuais para ver detalhes."
-      });
-    }
-
-    try {
-      const { GoogleGenAI } = await import("@google/genai");
-      
-      // Validação agressiva da chave
-      if (!apiKey || apiKey.includes("YOUR_") || apiKey.length < 10) {
-        throw new Error("API Key inválida ou não configurada.");
-      }
-
-      const ai = new GoogleGenAI({ apiKey });
-      const headlines = articles.slice(0, 5).map(a => a.title).join("\n- ");
-      const prompt = `Com base nestas manchetes:\n- ${headlines}\n\nCrie um "Panorama Inteligente" em Português:
-      1. Outlook: Um parágrafo equilibrado e analítico sobre o estado atual destas notícias.
-      2. Highlights: Três pontos cruciais destacados.
-      3. Recomendação: O que leitor deve observar a seguir.
-      Retorne em JSON: { "outlook": string, "highlights": string[], "recommendation": string }`;
-
-      const result = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: prompt
-      });
-      const text = result.text;
-      // Remover possíveis blocks de markdown do JSON
-      const cleanJson = text.replace(/```json|```/g, "").trim();
-      res.json(JSON.parse(cleanJson));
-    } catch (e: any) {
-      if (!e.message?.includes("não configurada")) {
-        console.error("Erro no briefing:", e.message);
-      }
-      res.json({
-        outlook: "Não foi possível gerar a análise inteligente no momento.",
-        highlights: ["Quota de IA excedida ou erro de rede", "Tente novamente em breve"],
-        recommendation: "Continue acompanhando as notícias em tempo real."
-      });
-    }
-  });
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`\n🚀 NewsFlow 2.0 Service\n`);

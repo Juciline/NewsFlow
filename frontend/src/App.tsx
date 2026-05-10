@@ -366,8 +366,8 @@ export default function App() {
     setLoadingBriefing(true);
     setIsBriefingOpen(true);
     try {
-      const response = await axios.post('/api/briefing', { articles: news.slice(0, 10) });
-      setBriefingData(response.data);
+      const data = await geminiService.generateBriefing(news.slice(0, 10));
+      setBriefingData(data);
     } catch (e) {
       console.error(e);
     } finally {
@@ -482,17 +482,24 @@ export default function App() {
         return;
       }
       
-      const articles = (data.articles || []).map((a: any) => ({
-        ...a,
-        id: a.id || a.article_id || a.link || a.url || Math.random().toString(),
-        sentiment: 'Neutro',
-        tags: [selectedCategory]
-      }));
+      const articles = (data.articles || []).map((a: any) => {
+        const originalId = a.id || a.article_id || a.link || a.url || Math.random().toString();
+        const safeId = String(originalId).replace(/[^a-zA-Z0-9_\-]/g, '_').slice(-100);
+        return {
+          ...a,
+          id: safeId,
+          originalId: originalId,
+          sentiment: 'Neutro',
+          tags: [selectedCategory]
+        };
+      });
       setNextPage(data.nextPage);
       
       setNews(articles);
       
-      const enriched = await Promise.all(articles.map(async (article: any) => {
+      const enriched = await Promise.all(articles.map(async (article: any, index: number) => {
+        // Analisar apenas os primeiros 3 para não estourar a quota e poupar recursos no carregamento inicial
+        if (index > 2) return article;
         try {
           const analysis = await geminiService.analyzeNews(article.title, article.summary, article.link || article.url);
           return { ...article, ...analysis };
@@ -521,26 +528,34 @@ export default function App() {
       return;
     }
     
-    const articleId = article.id || article.article_id || article.link || article.url;
+    const articleId = article.originalId || article.id || article.article_id || article.link || article.url;
     if (!articleId) return;
 
-    const favRef = doc(db, 'users', user.uid, 'favorites', articleId);
-    const isFav = favorites.some(f => f.id === articleId || f.articleId === articleId);
+    // Usar o ID já higienizado se disponível, senão higienizar
+    const safeId = article.id && !article.id.includes('/') ? article.id : String(articleId).replace(/[^a-zA-Z0-9_\-]/g, '_').slice(-100);
+
+    const favRef = doc(db, 'users', user.uid, 'favorites', safeId);
+    const isFav = favorites.some(f => f.id === safeId || f.articleId === articleId);
     
-    if (isFav) {
-      await deleteDoc(favRef);
-    } else {
-      await setDoc(favRef, {
-        articleId: articleId,
-        title: article.title || 'Sem Título',
-        summary: article.summary || '',
-        link: article.link || article.url || '',
-        image_url: article.imageUrl || article.image_url || '',
-        pubDate: article.publishedAt || article.pubDate || '',
-        source_id: article.source || article.source_id || '',
-        userId: user.uid,
-        createdAt: serverTimestamp()
-      });
+    try {
+      if (isFav) {
+        await deleteDoc(favRef);
+      } else {
+        await setDoc(favRef, {
+          id: safeId,
+          articleId: articleId,
+          title: article.title || 'Sem Título',
+          summary: article.summary || '',
+          link: article.link || article.url || '',
+          image_url: article.imageUrl || article.image_url || '',
+          pubDate: article.publishedAt || article.pubDate || '',
+          source_id: article.source || article.source_id || '',
+          userId: user.uid,
+          createdAt: serverTimestamp()
+        });
+      }
+    } catch (error) {
+      handleFirestoreError(error, isFav ? OperationType.DELETE : OperationType.WRITE, `users/${user.uid}/favorites/${safeId}`);
     }
   };
 
@@ -674,7 +689,15 @@ export default function App() {
                         onClick={() => setIsProfileOpen(true)}
                       >
                         {user.photoURL ? (
-                          <img src={user.photoURL} alt={user.displayName} className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
+                          <img 
+                            src={user.photoURL} 
+                            alt={user.displayName} 
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || 'U')}&background=0D8ABC&color=fff`;
+                            }}
+                            className="w-full h-full object-cover group-hover:scale-110 transition-transform" 
+                          />
                         ) : (
                           user.displayName?.charAt(0) || user.email?.charAt(0).toUpperCase()
                         )}
@@ -716,6 +739,7 @@ export default function App() {
                 <img 
                   src={heroArticle?.imageUrl || heroArticle?.image_url || "https://images.unsplash.com/photo-1614728894747-a83421e2b9c9?auto=format&fit=crop&q=80&w=1600"} 
                   alt="Feature Story"
+                  referrerPolicy="no-referrer"
                   className="w-full h-full object-cover"
                 />
                 <div className="absolute bottom-4 right-4 px-3 py-1 bg-black/60 backdrop-blur-md border border-white/10 text-[9px] font-bold uppercase tracking-widest">
@@ -919,7 +943,7 @@ export default function App() {
                       publishedAt={item.publishedAt || item.pubDate}
                       sentiment={item.sentiment}
                       tags={item.tags || []}
-                      isFavorited={favorites.some(f => f.id === item.id)}
+                      isFavorited={favorites.some(f => f.id === item.id || f.articleId === item.originalId)}
                       onFavoriteToggle={(e) => {
                         e.stopPropagation();
                         toggleFavorite(item);

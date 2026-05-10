@@ -24,6 +24,41 @@ const CATEGORY_MAP: Record<string, string> = {
 
 const CATEGORIES = ['Tudo', 'Mundo', 'Tecnologia', 'Ciência', 'Negócios', 'Saúde', 'Cultura', 'Desporto'];
 
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null, userId: string) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: userId,
+      email: null, // Basic version here
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
 const PreferencesModal = ({ isOpen, onClose, userId, initialPreferences }: PreferencesModalProps) => {
   const [prefs, setPrefs] = useState<string[]>(initialPreferences);
 
@@ -47,7 +82,7 @@ const PreferencesModal = ({ isOpen, onClose, userId, initialPreferences }: Prefe
         updatedAt: serverTimestamp()
       }, { merge: true });
     } catch (error) {
-      console.error('Error updating preferences:', error);
+      handleFirestoreError(error, OperationType.WRITE, `users/${userId}`, userId);
     }
   };
 

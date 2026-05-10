@@ -66,6 +66,7 @@ const NewsCard: React.FC<NewsCardProps> = ({
             <img
               src={imageUrl}
               alt={title}
+              referrerPolicy="no-referrer"
               className="object-cover w-full h-full grayscale-[0.2] hover:grayscale-0 transition-all duration-700"
               loading="lazy"
             />
