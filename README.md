@@ -1,20 +1,42 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# NewsFlow Journal v2.0
 
-# Run and deploy your AI Studio app
+![NewsFlow Logo](https://img.shields.io/badge/NewsFlow-Journal-blue?style=for-the-badge&logo=newspaper)
 
-This contains everything you need to run your app locally.
+Plataforma moderna de agregação de notícias com Inteligência Artificial, oferecendo resumos inteligentes, análise de sentimento e uma experiência visual premium inspirada em jornais clássicos.
 
-View your app in AI Studio: https://ai.studio/apps/a35c2620-235e-422e-8c89-6d80f7613850
+## 🚀 Funcionalidades Principais
 
-## Run Locally
+- **Análise Inteligente (IA):** Resumos automáticos e análise de sentimento via Gemini 1.5 Flash.
+- **Modo de Leitura (Reader Mode):** Extração de texto limpo para uma experiência sem distrações.
+- **Comparação de Cobertura:** Analise como diferentes pontos de vista tratariam o mesmo tópico.
+- **Exportação para PDF:** Guarde os seus favoritos num arquivo estruturado e elegante.
+- **Personalização:** Filtre por categorias e defina as suas preferências de feed.
 
-**Prerequisites:**  Node.js
+## 📦 Documentação Técnica
 
+Para detalhes profundos sobre a arquitetura, modelo de dados, integração de IA e instruções de deploy, consulte o nosso relatório oficial:
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+👉 **[Relatório Técnico Detalhado (docs/TECHNICAL_REPORT.md)](docs/TECHNICAL_REPORT.md)**
+
+## 🛠️ Stack Tecnológica
+
+- **Frontend:** React, TypeScript, Tailwind CSS, Framer Motion.
+- **Backend:** Node.js, Express, Axios.
+- **Database:** Firebase Firestore.
+- **IA:** Google Gemini 1.5 API.
+
+## ⚙️ Instalação Rápida
+
+```bash
+# Instalar dependências
+npm install
+
+# Configurar variáveis de ambiente
+cp .env.example .env
+
+# Iniciar servidor de desenvolvimento
+npm run dev
+```
+
+---
+Desenvolvido com foco em sofisticação técnica e clareza de informação.
