@@ -14,11 +14,17 @@ async function startServer() {
   app.use(cors());
   app.use(express.json());
 
+  // Logging middleware (fundamental para debug em "produção")
+  app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    next();
+  });
+
   // Cache em memória usando a utility
   const newsCache = new SimpleCache<any>(15 * 60 * 1000); // 15 minutos
   const analysisCache = new SimpleCache<any>(24 * 60 * 60 * 1000); // 24 horas
   
-  // API Rota de Health Check
+  // 1. API Rota de Health Check
   app.get("/api/health", (req, res) => {
     res.json({
       status: "ok",
@@ -32,8 +38,155 @@ async function startServer() {
     });
   });
 
-  // Rota para buscar notícias (integraçao com CurrentsAPI)
+  // 2. AI Endpoints (Mover para cá para garantir que são registrados antes do catch-all)
+  let lastQuotaErrorTime = 0;
+  const QUOTA_COOLDOWN = 30000;
+
+  app.post("/api/analyze", async (req, res) => {
+    const { title, content, link } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!title || !content) {
+      return res.status(400).json({ error: "Título e conteúdo são necessários." });
+    }
+
+    const cacheKey = `analysis:${link || title}`;
+    const cached = analysisCache.get(cacheKey);
+    if (cached) return res.json(cached);
+
+    const now = Date.now();
+    if (now - lastQuotaErrorTime < QUOTA_COOLDOWN) {
+      return res.json({
+        title,
+        summary: content.slice(0, 160).split('.').slice(0, 2).join('.') + "...",
+        sentiment: "Neutro",
+        tags: ["Atualidades"]
+      });
+    }
+
+    if (!apiKey || apiKey.includes("YOUR_") || apiKey.length < 10) {
+      return res.json({
+        title,
+        summary: content.slice(0, 150) + "...",
+        sentiment: "Neutro",
+        tags: ["Geral"]
+      });
+    }
+
+    try {
+      const { GoogleGenerativeAI } = await import("@google/generative-ai");
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+      const prompt = `Analise a seguinte notícia:
+             Título Original: ${title}
+             Conteúdo Original: ${content}
+
+             Forneça o seguinte em formato JSON, garantindo que TODO o texto de saída esteja em PORTUGUÊS:
+             1. O título traduzido para Português (se necessário).
+             2. Um resumo neutro e traduzido de exatamente 2 frases.
+             3. Análise de sentimento (Positivo, Negativo ou Neutro).
+             4. Três tags de categorias relevantes em Português.`;
+
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      let responseText = response.text();
+      
+      // Limpar possíveis Markdown code blocks
+      responseText = responseText.replace(/```json\n?|```/g, "").trim();
+      
+      if (!responseText) throw new Error("Resposta vazia da IA");
+      const parsed = JSON.parse(responseText);
+      analysisCache.set(cacheKey, parsed);
+      res.json(parsed);
+    } catch (error: any) {
+      console.error("Gemini analysis error:", error.message || error);
+      
+      const isAuthError = error.message?.includes('API key not valid') || JSON.stringify(error).includes('API_KEY_INVALID');
+      if (isAuthError) {
+        console.error("CRÍTICO: GEMINI_API_KEY Inválida ou não configurada corretamente nas Settings.");
+      }
+
+      if (error.message?.includes('429') || error.status === 429) {
+        lastQuotaErrorTime = Date.now();
+      }
+      res.json({
+        title,
+        summary: content.slice(0, 160).split('.').slice(0, 2).join('.') + " (Modo Offline)...",
+        sentiment: "Neutro",
+        tags: ["Atualidades"]
+      });
+    }
+  });
+
+  app.post("/api/briefing", async (req, res) => {
+    const { articles } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!articles || !Array.isArray(articles)) {
+      return res.status(400).json({ error: "Artigos inválidos." });
+    }
+
+    const headlines = articles.slice(0, 5).map(a => a.title).join("\n- ");
+    const cacheKey = `briefing:${headlines}`;
+    const cached = analysisCache.get(cacheKey);
+    if (cached) return res.json(cached);
+
+    const now = Date.now();
+    if (now - lastQuotaErrorTime < QUOTA_COOLDOWN) {
+      return res.json({
+        outlook: "O serviço de IA está em pausa para evitar sobrecarga (Quota 429). Tente novamente em 30 segundos.",
+        highlights: ["Continue explorando o feed", "Análise automática pausada"],
+        recommendation: "Recarregue o briefing em instantes."
+      });
+    }
+
+    try {
+      const { GoogleGenerativeAI } = await import("@google/generative-ai");
+      const genAI = new GoogleGenerativeAI(apiKey || '');
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+      const prompt = `Com base nestas manchetes:\n- ${headlines}\n\nCrie um "Panorama Inteligente" em Português:
+        1. Outlook: Um parágrafo equilibrado e analítico sobre o estado atual destas notícias.
+        2. Highlights: Três pontos cruciais destacados.
+        3. Recomendação: O que leitor deve observar a seguir.
+        Retorne SEMPRE em formato JSON válido com estas chaves: "outlook", "highlights" (array), "recommendation".`;
+
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      let responseText = response.text();
+      
+       // Limpar possíveis Markdown code blocks
+      responseText = responseText.replace(/```json\n?|```/g, "").trim();
+
+      if (!responseText) throw new Error("Resposta vazia da IA");
+      const parsed = JSON.parse(responseText);
+      analysisCache.set(cacheKey, parsed);
+      res.json(parsed);
+    } catch (error: any) {
+      console.error("Gemini briefing error:", error.message || error);
+      
+      const isAuthError = error.message?.includes('API key not valid') || JSON.stringify(error).includes('API_KEY_INVALID');
+      if (isAuthError) {
+        console.error("CRÍTICO: GEMINI_API_KEY Inválida ou não configurada corretamente nas Settings.");
+      }
+
+      if (error.message?.includes('429') || error.status === 429) {
+        lastQuotaErrorTime = Date.now();
+      }
+      res.json({
+        outlook: isAuthError 
+          ? "Erro de configuração: Chave de API Inválida (Verifique as Settings do app)." 
+          : "Não foi possível gerar a análise inteligente no momento.",
+        highlights: ["Siga as notícias locais", "Feed principal disponível"],
+        recommendation: "Continue acompanhando as notícias em tempo real."
+      });
+    }
+  });
+
+  // 3. Rota para buscar notícias (integraçao com CurrentsAPI)
   app.get("/api/news", async (req, res) => {
+    console.log(`[API NEWS] Request: category=${req.query.category}, q=${req.query.q}`);
     const { category = "top", page = "", q = "" } = req.query;
     const currentsKey = process.env.CURRENTS_API_KEY;
 
@@ -203,6 +356,12 @@ async function startServer() {
       console.error("Erro no Reader Mode:", error.message);
       res.status(500).json({ error: "Falha ao processar o artigo para leitura." });
     }
+  });
+
+  // 4. Fallback para rotas /api não encontradas (evita retornar o index.html para chamadas de API)
+  app.use("/api/*", (req, res) => {
+    console.warn(`[API 404] Route not found: ${req.method} ${req.originalUrl}`);
+    res.status(404).json({ error: `Rota de API não encontrada: ${req.originalUrl}` });
   });
 
   // Vite middleware for development

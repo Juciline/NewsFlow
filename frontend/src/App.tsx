@@ -472,8 +472,14 @@ export default function App() {
           .join(',');
       }
 
-      const response = await fetch(`/api/news?category=${apiCategory}&page=${pageNum}&q=${encodeURIComponent(query)}`);
-      const data = await response.json();
+      const response = await axios.get(`/api/news`, {
+        params: {
+          category: apiCategory,
+          page: pageNum,
+          q: query
+        }
+      });
+      const data = response.data;
       
       if (data.error || data.status === "error") {
         console.error("API Error:", data.error);
