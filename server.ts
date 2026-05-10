@@ -4,7 +4,7 @@ import cors from "cors";
 import path from "path";
 import axios from "axios";
 import { createServer as createViteServer } from "vite";
-import { SimpleCache } from "../utils/cache";
+import { SimpleCache } from "./utils/cache.ts";
 
 async function startServer() {
   const app = express();

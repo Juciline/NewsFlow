@@ -1,0 +1,49 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Dados de perfil e preferências do utilizador.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "preferences": {
+          "type": "object",
+          "properties": {
+            "categories": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Favorite": {
+      "title": "Favorite Article",
+      "description": "Notícia guardada pelo utilizador.",
+      "type": "object",
+      "properties": {
+        "articleId": { "type": "string" },
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "link": { "type": "string" },
+        "image_url": { "type": "string" },
+        "pubDate": { "type": "string" },
+        "source_id": { "type": "string" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "Coleção principal de utilizadores e suas configurações."
+    },
+    "users/{userId}/favorites/{articleId}": {
+      "schema": "Favorite",
+      "description": "Subcoleção de artigos guardados por cada utilizador."
+    }
+  }
+}

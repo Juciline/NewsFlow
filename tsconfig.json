@@ -21,6 +21,6 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["frontend/src", "backend"],
+  "include": ["frontend/src", "server.ts", "utils"],
   "exclude": ["node_modules", "dist"]
 }
