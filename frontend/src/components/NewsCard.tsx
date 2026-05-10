@@ -71,8 +71,11 @@ const NewsCard: React.FC<NewsCardProps> = ({
               loading="lazy"
             />
             <div className="absolute top-4 left-4">
-              <span className={cn("px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest bg-foreground text-background", sentimentColor[sentiment].split(' ')[0])}>
-                {sentiment}
+              <span className={cn(
+                "px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest bg-foreground text-background", 
+                (sentimentColor[sentiment] || sentimentColor.Neutro).split(' ')[0]
+              )}>
+                {sentiment || 'Neutro'}
               </span>
             </div>
           </div>

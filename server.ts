@@ -275,7 +275,8 @@ async function startServer() {
             'world': 'world'
           };
 
-          const firstCategory = category.toString().split(',')[0].toLowerCase();
+          const catStr = (category || "top").toString();
+          const firstCategory = catStr.split(',')[0].toLowerCase();
           const currentsCategory = categoryMap[firstCategory] || 'general';
           
           const params: any = {
@@ -302,7 +303,7 @@ async function startServer() {
               imageUrl: article.image !== "None" ? article.image : "https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&q=80&w=1200",
               link: article.url,
               sentiment: "Neutro",
-              tags: [category.toString()]
+              tags: [catStr]
             }));
 
             const responseData = {

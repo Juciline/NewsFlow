@@ -1285,7 +1285,7 @@ export default function App() {
                       </header>
 
                       <div className="prose prose-invert prose-lg max-w-none">
-                        {readingContent.content?.split('\n').filter((p: string) => p.trim() !== '').map((para: string, i: number) => (
+                        {(readingContent.content || '').split('\n').filter((p: string) => p.trim() !== '').map((para: string, i: number) => (
                           <p 
                             key={i} 
                             className={cn(
