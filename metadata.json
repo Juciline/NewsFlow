@@ -1,6 +1,6 @@
 {
   "name": "NewsFlow",
   "description": "Uma plataforma moderna de agregação de notícias com inteligência artificial, oferecendo resumos, análise de sentimento e uma experiência visual premium.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["notifications"],
   "majorCapabilities": []
 }

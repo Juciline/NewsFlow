@@ -19,8 +19,13 @@ import {
   Moon,
   LogOut,
   Loader2,
-  Heart as HeartIcon
+  Heart as HeartIcon,
+  Download,
+  Bell,
+  Repeat2
 } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { cn } from '@/lib/utils';
 import { geminiService } from './services/geminiService';
 import NewsCard from './components/NewsCard';
@@ -30,7 +35,7 @@ import PreferencesModal from './components/PreferencesModal';
 import ProfileModal from './components/ProfileModal';
 import { auth, db } from '@/lib/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, getDocFromServer, serverTimestamp } from 'firebase/firestore';
 
 enum OperationType {
   CREATE = 'create',
@@ -104,23 +109,214 @@ export default function App() {
   const [view, setView] = useState<'home' | 'favorites'>('home');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [isComparing, setIsComparing] = useState(false);
+  const [comparisonData, setComparisonData] = useState<any>(null);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [lastNotifiedId, setLastNotifiedId] = useState<string | null>(null);
+  const [systemMessage, setSystemMessage] = useState<{ text: string, type: 'error' | 'success' | 'info' } | null>(null);
+
+  // Simulated "Push" for breaking news
+  useEffect(() => {
+    if (notificationsEnabled && news.length > 0 && news[0].id !== lastNotifiedId) {
+      const topNews = news[0];
+      // Avoid notification spam on first load if multiple items, but trigger for the top "breaking" one
+      try {
+        new Notification('ÚLTIMA HORA: NewsFlow Journal', {
+          body: topNews.title,
+          icon: topNews.imageUrl || topNews.image_url || '/favicon.ico'
+        });
+        setLastNotifiedId(topNews.id);
+      } catch (err) {
+        console.warn('Erro ao disparar notificação local:', err);
+      }
+    }
+  }, [news, notificationsEnabled, lastNotifiedId]);
+
+  // Firestore Connection Test
+  useEffect(() => {
+    const testConnection = async () => {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration.");
+        }
+      }
+    };
+    testConnection();
+  }, []);
+
+  // Notifications logic
+  useEffect(() => {
+    if ('Notification' in window) {
+      setNotificationsEnabled(Notification.permission === 'granted');
+    }
+  }, []);
+
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+      setSystemMessage({ text: "Este browser não suporta notificações de desktop.", type: 'error' });
+      return;
+    }
+
+    try {
+      // Se já estiver garantido, apenas confirmamos o estado
+      if (Notification.permission === 'granted') {
+        setNotificationsEnabled(true);
+        try {
+          new Notification('NewsFlow Journal', {
+            body: 'Notificações confirmadas!',
+            icon: '/favicon.ico'
+          });
+        } catch (e) { console.warn("Erro ao disparar notificação inicial:", e); }
+        setSystemMessage({ text: "As notificações já estão ativas para este site.", type: 'success' });
+        return;
+      }
+
+      const permission = await Notification.requestPermission();
+      setNotificationsEnabled(permission === 'granted');
+      
+      if (permission === 'granted') {
+        new Notification('NewsFlow Journal', {
+          body: 'Notificações ativadas com sucesso!',
+          icon: '/favicon.ico'
+        });
+        setSystemMessage({ text: "Notificações ativadas!", type: 'success' });
+      } else if (permission === 'denied') {
+        setSystemMessage({ 
+          text: "Notificações bloqueadas pelo browser. Para testar, clique no botão de 'Abrir em novo separador' no topo direito da barra de ferramentas.", 
+          type: 'error' 
+        });
+      } else {
+        setSystemMessage({ text: "Permissão de notificações ignorada.", type: 'info' });
+      }
+    } catch (err) {
+      console.error('Erro ao pedir permissão de notificações:', err);
+      setSystemMessage({ 
+        text: "Restrição de Janela: O browser bloqueou o pedido dentro do editor. Por favor, use o botão 'Open Project' (seta para fora) para abrir num novo separador e ativar o sino.", 
+        type: 'info' 
+      });
+    }
+    
+    // Auto-hide message after 8 seconds (longer for reading help)
+    setTimeout(() => setSystemMessage(null), 8000);
+  };
+
+  const handleTopicComparison = async (article: any) => {
+    if (!article) return;
+    setIsComparing(true);
+    setComparisonData(null);
+    try {
+      const response = await geminiService.analyzeNews(
+        `COMPARE COVERAGE: ${article.title || 'Sem Título'}`,
+        `Analise como diferentes fontes (conservadoras, progressistas, técnicas) abordariam este tópico: ${article.summary || ''}. Forneça uma síntese das perspectivas prováveis.`,
+        article.link || article.url
+      );
+      setComparisonData({ ...response, articleTitle: article.title || 'Sem Título' });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsComparing(false);
+    }
+  };
+
+  const exportFavoritesToPDF = () => {
+    if (!favorites || favorites.length === 0) return;
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.width;
+    
+    // Configurações Estéticas (Modo Journal)
+    const primaryColor: [number, number, number] = [15, 23, 42]; // Slate 900
+    const accentColor: [number, number, number] = [59, 130, 246]; // Blue 500
+    
+    // Cabeçalho Principal
+    doc.setFont('times', 'bold');
+    doc.setFontSize(24);
+    doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+    doc.text('NewsFlow Journal', 14, 25);
+    
+    // Linha decorativa
+    doc.setDrawColor(accentColor[0], accentColor[1], accentColor[2]);
+    doc.setLineWidth(1);
+    doc.line(14, 28, 40, 28);
+    
+    // Metadados
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(100, 100, 100);
+    doc.text('ARQUIVO DE NOTÍCIAS FAVORITAS', 14, 35);
+    doc.text(`Gerado em: ${new Date().toLocaleString('pt-PT')}`, pageWidth - 14, 35, { align: 'right' });
+
+    const tableData = favorites.filter(f => f && (f.title || f.link || f.url)).map(f => [
+      f.title || 'Sem Título',
+      (f.source || f.source_id || 'N/A').toUpperCase(),
+      new Date(f.pubDate || f.publishedAt).toLocaleDateString('pt-PT'),
+      f.link || f.url || ''
+    ]);
+
+    autoTable(doc, {
+      head: [['Título da Notícia', 'Fonte', 'Data', 'Ligação / URL']],
+      body: tableData,
+      startY: 45,
+      margin: { left: 14, right: 14 },
+      styles: { 
+        fontSize: 9, 
+        font: 'helvetica',
+        cellPadding: 4,
+        lineColor: [230, 230, 230],
+        lineWidth: 0.1,
+      },
+      headStyles: { 
+        fillColor: primaryColor,
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 8,
+        halign: 'left'
+      },
+      columnStyles: {
+        0: { cellWidth: 80, fontStyle: 'bold' }, // Título (mais espaço e negrito)
+        1: { cellWidth: 30, halign: 'center' }, // Fonte
+        2: { cellWidth: 25, halign: 'center' }, // Data
+        3: { cellWidth: 'auto', textColor: accentColor } // Link
+      },
+      alternateRowStyles: {
+        fillColor: [250, 250, 250]
+      },
+      didDrawPage: (data) => {
+        // Rodapé
+        doc.setFontSize(8);
+        doc.setTextColor(150, 150, 150);
+        doc.text(
+          `Página ${data.pageNumber}`, 
+          pageWidth / 2, 
+          doc.internal.pageSize.height - 10, 
+          { align: 'center' }
+        );
+      }
+    });
+
+    doc.save(`newsflow-favoritos-${new Date().getTime()}.pdf`);
+  };
 
   // Reader Logic
   const openReader = async (article: any) => {
+    if (!article) return;
     setActiveArticle(article);
     setLoadingReader(true);
     setReadingContent(null);
     try {
-      const response = await axios.post('/api/article-reader', { url: article.link });
+      const url = article.link || article.url;
+      if (!url) throw new Error("URL não disponível");
+      
+      const response = await axios.post('/api/article-reader', { url });
       setReadingContent(response.data);
     } catch (e) {
       console.error(e);
-      // Fallback: se falhar, define o conteúdo como o sumário original
       setReadingContent({
-        title: article.title,
-        content: article.summary + "\n\n(Não foi possível carregar o texto completo automaticamente.)",
-        author: article.author,
-        date: article.pubDate
+        title: article.title || 'Sem Título',
+        content: (article.summary || '') + "\n\n(Não foi possível carregar o texto completo automaticamente.)",
+        author: article.author || article.source || article.source_id,
+        date: article.pubDate || article.publishedAt
       });
     } finally {
       setLoadingReader(false);
@@ -286,18 +482,22 @@ export default function App() {
         return;
       }
       
-      const articles = data.articles || [];
+      const articles = (data.articles || []).map((a: any) => ({
+        ...a,
+        id: a.id || a.article_id || a.link || a.url || Math.random().toString(),
+        sentiment: 'Neutro',
+        tags: [selectedCategory]
+      }));
       setNextPage(data.nextPage);
       
-      // Enriquecer em background
-      setNews(articles.map((a: any) => ({ ...a, sentiment: 'Neutro', tags: [selectedCategory] })));
+      setNews(articles);
       
       const enriched = await Promise.all(articles.map(async (article: any) => {
         try {
-          const analysis = await geminiService.analyzeNews(article.title, article.summary, article.link);
+          const analysis = await geminiService.analyzeNews(article.title, article.summary, article.link || article.url);
           return { ...article, ...analysis };
         } catch (e) {
-          return { ...article, tags: [selectedCategory], sentiment: 'Neutro' };
+          return article;
         }
       }));
       setNews(enriched);
@@ -316,19 +516,30 @@ export default function App() {
   }, [selectedCategory, view, userPreferences, debouncedQuery]);
 
   const toggleFavorite = async (article: any) => {
-    if (!user) {
-      setIsAuthOpen(true);
+    if (!user || !article) {
+      if (!user) setIsAuthOpen(true);
       return;
     }
-    const favRef = doc(db, 'users', user.uid, 'favorites', article.id);
-    const isFav = favorites.some(f => f.id === article.id);
+    
+    const articleId = article.id || article.article_id || article.link || article.url;
+    if (!articleId) return;
+
+    const favRef = doc(db, 'users', user.uid, 'favorites', articleId);
+    const isFav = favorites.some(f => f.id === articleId || f.articleId === articleId);
     
     if (isFav) {
       await deleteDoc(favRef);
     } else {
       await setDoc(favRef, {
-        ...article,
-        createdAt: new Date().toISOString()
+        articleId: articleId,
+        title: article.title || 'Sem Título',
+        summary: article.summary || '',
+        link: article.link || article.url || '',
+        image_url: article.imageUrl || article.image_url || '',
+        pubDate: article.publishedAt || article.pubDate || '',
+        source_id: article.source || article.source_id || '',
+        userId: user.uid,
+        createdAt: serverTimestamp()
       });
     }
   };
@@ -420,6 +631,26 @@ export default function App() {
 
                {user ? (
                  <div className="flex items-center gap-4">
+                    <button 
+                       onClick={requestNotificationPermission}
+                       className={cn(
+                         "w-10 h-10 border border-border flex items-center justify-center transition-colors",
+                         notificationsEnabled ? "text-emerald-500 bg-emerald-500/5" : "text-muted-foreground hover:bg-accent"
+                       )}
+                       title={notificationsEnabled ? "Notificações Ativas" : "Ativar Notificações Push"}
+                    >
+                       <Bell size={18} fill={notificationsEnabled ? "currentColor" : "none"} />
+                    </button>
+
+                    {view === 'favorites' && (
+                      <button 
+                        onClick={exportFavoritesToPDF}
+                        className="w-10 h-10 border border-border flex items-center justify-center hover:bg-emerald-500 hover:text-white transition-colors"
+                        title="Exportar para PDF"
+                      >
+                        <Download size={18} />
+                      </button>
+                    )}
                     <button 
                       onClick={() => setView(view === 'home' ? 'favorites' : 'home')}
                       className={cn(
@@ -679,8 +910,10 @@ export default function App() {
                   filteredNews.map((item) => (
                     <NewsCard
                       key={item.id}
+                      id={item.id}
                       title={item.title}
                       summary={item.summary}
+                      url={item.link || item.url}
                       imageUrl={item.imageUrl || item.image_url}
                       source={item.source || item.source_id}
                       publishedAt={item.publishedAt || item.pubDate}
@@ -690,6 +923,10 @@ export default function App() {
                       onFavoriteToggle={(e) => {
                         e.stopPropagation();
                         toggleFavorite(item);
+                      }}
+                      onCompare={(e) => {
+                        e.stopPropagation();
+                        handleTopicComparison(item);
                       }}
                       onClick={() => openReader(item)}
                     />
@@ -716,7 +953,105 @@ export default function App() {
           </div>
         )}
 
+        {user && !user.emailVerified && (
+          <div className="bg-amber-500/10 border-b border-amber-500/20 py-2 px-4 text-center">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-amber-500 flex items-center justify-center gap-2">
+              <Bell size={12} /> Email não verificado. Algumas funcionalidades (como favoritos) podem estar restritas.
+            </p>
+          </div>
+        )}
+
+        {systemMessage && (
+          <div className={cn(
+            "fixed bottom-4 right-4 z-50 p-4 rounded-lg shadow-2xl border animate-in fade-in slide-in-from-bottom-4 duration-300",
+            systemMessage.type === 'error' ? "bg-red-500 text-white border-red-600" :
+            systemMessage.type === 'success' ? "bg-emerald-500 text-white border-emerald-600" :
+            "bg-slate-800 text-white border-slate-700"
+          )}>
+            <div className="flex items-center gap-3">
+              <Bell size={18} />
+              <p className="text-sm font-medium">{systemMessage.text}</p>
+              <button onClick={() => setSystemMessage(null)} className="ml-2 hover:bg-white/20 p-1 rounded transition-colors">
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+        )}
+
         <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} />
+        
+        {/* Topic Comparison Modal */}
+        <AnimatePresence>
+          {isComparing && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-background/80 backdrop-blur-md">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="bg-card border border-border p-8 max-w-2xl w-full shadow-2xl relative overflow-hidden"
+              >
+                <div className="absolute top-0 left-0 w-1 h-full bg-blue-500" />
+                <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-blue-500 mb-4">
+                  <Repeat2 size={12} /> Analisando Cobertura Cruzada
+                </div>
+                <h3 className="text-2xl font-serif font-bold mb-6">Aguarde enquanto comparamos as fontes...</h3>
+                <div className="space-y-4">
+                  <div className="h-4 bg-muted animate-pulse w-full" />
+                  <div className="h-4 bg-muted animate-pulse w-[90%]" />
+                  <div className="h-4 bg-muted animate-pulse w-[95%]" />
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {comparisonData && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-background/80 backdrop-blur-md overflow-y-auto">
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
+                className="bg-card border border-border p-8 max-w-3xl w-full shadow-2xl relative my-8"
+              >
+                <button 
+                  onClick={() => setComparisonData(null)}
+                  className="absolute top-4 right-4 text-muted-foreground hover:text-foreground"
+                >
+                  <X size={20} />
+                </button>
+                <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-blue-500 mb-4">
+                  <Repeat2 size={12} /> Diferentes Perspectivas
+                </div>
+                <h3 className="text-2xl font-serif font-bold mb-6 italic border-b border-border pb-4">
+                  &quot;{comparisonData.articleTitle}&quot;
+                </h3>
+                
+                <div className="space-y-8 font-serif leading-relaxed">
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-[0.2em] text-muted-foreground mb-3">Síntese de Cobertura</h4>
+                    <p className="text-foreground/90">{comparisonData.summary || "Análise indisponível para este tópico no momento."}</p>
+                  </div>
+                  
+                  {comparisonData.tags && (
+                    <div className="flex flex-wrap gap-2">
+                      {comparisonData.tags.map((tag: string) => (
+                        <span key={tag} className="px-2 py-1 bg-muted border border-border text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="pt-6 border-t border-border">
+                    <p className="text-[10px] text-muted-foreground italic">
+                      * Esta análise é gerada por Inteligência Artificial ao comparar padrões de discurso comuns em diferentes tipos de veículos mediáticos.
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
         {user && (
           <PreferencesModal 
             isOpen={isPreferencesOpen} 

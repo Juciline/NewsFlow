@@ -4,9 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
-    "build": "vite build",
-    "preview": "vite preview",
+    "dev": "tsx backend/server.ts",
+    "build": "vite build frontend",
+    "preview": "vite preview frontend",
     "clean": "rm -rf dist",
     "lint": "eslint . && tsc --noEmit"
   },
@@ -28,6 +28,8 @@
     "express": "^4.21.2",
     "firebase": "^12.13.0",
     "framer-motion": "^12.38.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "react": "^19.0.1",

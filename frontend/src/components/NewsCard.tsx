@@ -1,11 +1,13 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Heart, Share2 } from 'lucide-react';
+import { Heart, Share2, MessageCircle, Twitter, Linkedin, Repeat2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface NewsCardProps {
+  id: string;
   title: string;
   summary: string;
+  url: string;
   imageUrl?: string;
   source: string;
   publishedAt: string;
@@ -14,11 +16,14 @@ interface NewsCardProps {
   onClick?: () => void;
   isFavorited?: boolean;
   onFavoriteToggle?: (e: React.MouseEvent) => void;
+  onCompare?: (e: React.MouseEvent) => void;
 }
 
 const NewsCard: React.FC<NewsCardProps> = ({
+  id,
   title,
   summary,
+  url,
   imageUrl,
   source,
   publishedAt,
@@ -26,12 +31,25 @@ const NewsCard: React.FC<NewsCardProps> = ({
   tags,
   onClick,
   isFavorited,
-  onFavoriteToggle
+  onFavoriteToggle,
+  onCompare
 }) => {
+  const [showShare, setShowShare] = React.useState(false);
+
   const sentimentColor = {
     Positivo: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/50',
     Negativo: 'bg-rose-500/20 text-rose-400 border-rose-500/50',
     Neutro: 'bg-blue-500/20 text-blue-400 border-blue-500/50',
+  };
+
+  const shareLinks = {
+    whatsapp: `https://api.whatsapp.com/send?text=${encodeURIComponent((title || '') + ' ' + (url || ''))}`,
+    twitter: `https://twitter.com/intent/tweet?text=${encodeURIComponent(title || '')}&url=${encodeURIComponent(url || '')}`,
+    linkedin: `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(url || '')}`
+  };
+
+  const handleShare = (platform: keyof typeof shareLinks) => {
+    window.open(shareLinks[platform], '_blank');
   };
 
   return (
@@ -93,10 +111,37 @@ const NewsCard: React.FC<NewsCardProps> = ({
                 "transition-colors",
                 isFavorited ? "text-red-500" : "text-muted-foreground hover:text-foreground"
               )}
+              title="Favoritar"
             >
               <Heart size={14} fill={isFavorited ? "currentColor" : "none"} />
             </button>
-            <button className="text-muted-foreground hover:text-foreground transition-colors"><Share2 size={14} /></button>
+            <button 
+              className="text-muted-foreground hover:text-blue-500 transition-colors"
+              onClick={(e) => { e.stopPropagation(); onCompare?.(e); }}
+              title="Comparar Cobertura"
+            >
+              <Repeat2 size={14} />
+            </button>
+            <div className="relative">
+              <button 
+                onClick={(e) => { e.stopPropagation(); setShowShare(!showShare); }}
+                className={cn("transition-colors", showShare ? "text-blue-500" : "text-muted-foreground hover:text-foreground")}
+                title="Partilhar"
+              >
+                <Share2 size={14} />
+              </button>
+              
+              {showShare && (
+                <div 
+                  className="absolute bottom-full right-0 mb-2 p-2 bg-background border border-border shadow-xl flex gap-2 z-10"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button onClick={() => handleShare('whatsapp')} className="p-1 hover:bg-emerald-500/10 text-emerald-500 transition-colors"><MessageCircle size={14} /></button>
+                  <button onClick={() => handleShare('twitter')} className="p-1 hover:bg-blue-400/10 text-blue-400 transition-colors"><Twitter size={14} /></button>
+                  <button onClick={() => handleShare('linkedin')} className="p-1 hover:bg-blue-700/10 text-blue-700 transition-colors"><Linkedin size={14} /></button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

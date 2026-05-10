@@ -11,8 +11,12 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
     function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+      return isVerifiedUser() && request.auth.uid == userId;
     }
 
     function isValidId(id) {
@@ -42,27 +46,31 @@ service cloud.firestore {
       allow get: if isOwner(userId);
       
       allow create: if isOwner(userId) 
-        && isValidUser(incoming());
+        && isValidUser(incoming())
+        && incoming().keys().hasAll(['uid', 'email', 'createdAt', 'updatedAt'])
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
       
       allow update: if isOwner(userId)
         && isValidUser(incoming())
+        && incoming().updatedAt == request.time
         && (
             // Action: Update Profile
             (incoming().diff(existing()).affectedKeys().hasAny(['displayName', 'photoURL', 'email', 'updatedAt'])) ||
             // Action: Update Preferences
             (incoming().diff(existing()).affectedKeys().hasOnly(['preferences', 'updatedAt']))
         )
-        && (incoming().get('updatedAt', request.time) == request.time || !incoming().keys().hasAll(['updatedAt']));
+        && incoming().get('createdAt', existing().createdAt) == existing().createdAt;
     }
 
     // --- Favorites Subcollection ---
     match /users/{userId}/favorites/{favoriteId} {
       function isValidFavorite(data) {
-        return data.keys().hasAll(['articleId', 'title', 'link', 'userId'])
+        return data.keys().hasAll(['articleId', 'title', 'link', 'userId', 'createdAt'])
           && data.userId == request.auth.uid
           && data.articleId is string && data.articleId.size() <= 128
-          && data.title is string && data.title.size() <= 512
-          && data.link is string && data.link.size() <= 1024;
+          && data.title is string && data.title.size() <= 1024
+          && data.link is string && data.link.size() <= 2048;
       }
 
       allow list: if isOwner(userId);
@@ -70,7 +78,8 @@ service cloud.firestore {
       
       allow create: if isOwner(userId) 
         && isValidId(favoriteId)
-        && isValidFavorite(incoming());
+        && isValidFavorite(incoming())
+        && incoming().createdAt == request.time;
         
       allow delete: if isOwner(userId);
     }

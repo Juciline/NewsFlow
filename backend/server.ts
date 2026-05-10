@@ -4,6 +4,7 @@ import cors from "cors";
 import path from "path";
 import axios from "axios";
 import { createServer as createViteServer } from "vite";
+import { SimpleCache } from "../utils/cache";
 
 async function startServer() {
   const app = express();
@@ -13,14 +14,11 @@ async function startServer() {
   app.use(cors());
   app.use(express.json());
 
-  // Cache em memória
-  const newsCache = new Map<string, { data: any, timestamp: number }>();
-  const analysisCache = new Map<string, { data: any, timestamp: number }>();
+  // Cache em memória usando a utility
+  const newsCache = new SimpleCache<any>(15 * 60 * 1000); // 15 minutos
+  const analysisCache = new SimpleCache<any>(24 * 60 * 60 * 1000); // 24 horas
   const pendingAnalyses = new Map<string, Promise<any>>();
   
-  const CACHE_TTL = 15 * 60 * 1000; // 15 minutos para notícias
-  const ANALYSIS_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 horas para análises
-
   // API Rota de Health Check
   app.get("/api/health", (req, res) => {
     res.json({
@@ -49,8 +47,8 @@ async function startServer() {
     
     // 1. Verificar Cache
     const cached = analysisCache.get(analysisKey);
-    if (cached && (Date.now() - cached.timestamp < ANALYSIS_CACHE_TTL)) {
-      return res.json(cached.data);
+    if (cached) {
+      return res.json(cached);
     }
 
     // 2. Coalescência de Requisições (evitar múltiplas chamadas simultâneas para o mesmo item)
@@ -84,15 +82,26 @@ async function startServer() {
 
         const ai = new GoogleGenAI({ apiKey });
         
-        const prompt = `Analise a seguinte notícia:
-        Título Original: ${title}
-        Conteúdo Original: ${content}
+        const isComparison = title.includes("COMPARE COVERAGE:");
+        const prompt = isComparison 
+          ? `ESTA É UMA SOLICITAÇÃO DE COMPARAÇÃO DE COBERTURA.
+             Título: ${title.replace("COMPARE COVERAGE:", "")}
+             Instrução: ${content}
 
-        Forneça o seguinte em formato JSON, garantindo que TODO o texto de saída esteja em PORTUGUÊS:
-        1. O título traduzido para Português (se necessário).
-        2. Um resumo neutro e traduzido de exatamente 2 frases.
-        3. Análise de sentimento (Positivo, Negativo ou Neutro).
-        4. Três tags de categorias relevantes em Português.`;
+             Forneça o seguinte em formato JSON, garantindo que TODO o texto de saída esteja em PORTUGUÊS:
+             1. O título do tópico original.
+             2. Uma síntese de cobertura comparativa de exatamente 3 frases.
+             3. Análise de sentimento geral do tópico (Positivo, Negativo ou Neutro).
+             4. Três tags de categorias relevantes.`
+          : `Analise a seguinte notícia:
+             Título Original: ${title}
+             Conteúdo Original: ${content}
+
+             Forneça o seguinte em formato JSON, garantindo que TODO o texto de saída esteja em PORTUGUÊS:
+             1. O título traduzido para Português (se necessário).
+             2. Um resumo neutro e traduzido de exatamente 2 frases.
+             3. Análise de sentimento (Positivo, Negativo ou Neutro).
+             4. Três tags de categorias relevantes em Português.`;
 
         const response = await ai.models.generateContent({
           model: "gemini-1.5-flash",
@@ -113,7 +122,7 @@ async function startServer() {
         });
 
         const result = JSON.parse(response.text);
-        analysisCache.set(analysisKey, { data: result, timestamp: Date.now() });
+        analysisCache.set(analysisKey, result);
         return result;
       } catch (error: any) {
         // Log simplificado se for apenas chave inválida para não poluir o terminal
@@ -154,9 +163,9 @@ async function startServer() {
     const cacheKey = `${category}-${page}-${q}`;
     const cachedData = newsCache.get(cacheKey);
 
-    if (cachedData && (Date.now() - cachedData.timestamp < CACHE_TTL)) {
+    if (cachedData) {
       console.log(`[Cache] Usando dados em cache para: ${cacheKey}`);
-      return res.json(cachedData.data);
+      return res.json(cachedData);
     }
 
     // Se não houver a API Key, usa mock
@@ -240,7 +249,7 @@ async function startServer() {
               provider: "currentsapi.services"
             };
 
-            newsCache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+            newsCache.set(cacheKey, responseData);
             return res.json(responseData);
           }
         } catch (e: any) {
@@ -323,6 +332,8 @@ async function startServer() {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
+      configFile: path.resolve(process.cwd(), "frontend/vite.config.ts"),
+      root: path.resolve(process.cwd(), "frontend"),
     });
     app.use(vite.middlewares);
   } else {

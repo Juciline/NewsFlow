@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X, Mail, Lock, User, LogIn, UserPlus } from 'lucide-react';
 import { auth, googleProvider, db } from '@/lib/firebase';
 import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { cn } from '@/lib/utils';
 
 interface AuthModalProps {
@@ -19,6 +19,31 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const ensureUserDocument = async (user: any, nameAttr?: string) => {
+    const userRef = doc(db, 'users', user.uid);
+    try {
+      const docSnap = await getDoc(userRef);
+      if (!docSnap.exists()) {
+        await setDoc(userRef, {
+          uid: user.uid,
+          displayName: user.displayName || nameAttr || 'Utilizador',
+          email: user.email,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        await setDoc(userRef, {
+          displayName: user.displayName || nameAttr || docSnap.data().displayName,
+          email: user.email,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      }
+    } catch (err) {
+      console.error('Erro ao garantir documento do utilizador:', err);
+      // Aqui poderíamos lançar para o catch exterior se quisermos bloquear o login
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,16 +66,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
         user = userCredential.user;
       }
 
-      // Garantir documento do utilizador no Firestore
-      const userRef = doc(db, 'users', user.uid);
-      await setDoc(userRef, {
-        uid: user.uid,
-        displayName: user.displayName || name,
-        email: user.email,
-        updatedAt: serverTimestamp(),
-        createdAt: serverTimestamp()
-      }, { merge: true });
-
+      await ensureUserDocument(user, name);
       onClose();
     } catch (err: any) {
       console.error(err);
@@ -71,18 +87,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const handleGoogleSignIn = async () => {
     try {
       const res = await signInWithPopup(auth, googleProvider);
-      const user = res.user;
-
-      // Garantir documento do utilizador no Firestore
-      const userRef = doc(db, 'users', user.uid);
-      await setDoc(userRef, {
-        uid: user.uid,
-        displayName: user.displayName,
-        email: user.email,
-        updatedAt: serverTimestamp(),
-        createdAt: serverTimestamp()
-      }, { merge: true });
-
+      await ensureUserDocument(res.user);
       onClose();
     } catch (err: any) {
       setError(err.message);
