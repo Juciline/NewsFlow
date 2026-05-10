@@ -20,6 +20,20 @@ async function startServer() {
     next();
   });
 
+  // Validação de Configuração Inicial
+  console.log("--- CONFIGURAÇÃO DE AMBIENTE ---");
+  const config = {
+    GEMINI_KEY: process.env.GEMINI_API_KEY ? "DEFINIDA (OK)" : "NÃO DEFINIDA (ERRO)",
+    CURRENTS_KEY: process.env.CURRENTS_API_KEY ? "DEFINIDA (OK)" : "NÃO DEFINIDA (MOCK MODE)",
+    NODE_ENV: process.env.NODE_ENV || "development",
+    PORT: PORT
+  };
+  console.table(config);
+  if (!process.env.GEMINI_API_KEY) {
+    console.warn("AVISO: GEMINI_API_KEY não encontrada. A IA funcionará apenas em modo Mock/Resumo Simples.");
+  }
+  console.log("--------------------------------\n");
+
   // Cache em memória usando a utility
   const newsCache = new SimpleCache<any>(15 * 60 * 1000); // 15 minutos
   const analysisCache = new SimpleCache<any>(24 * 60 * 60 * 1000); // 24 horas
@@ -75,6 +89,11 @@ async function startServer() {
 
     try {
       const { GoogleGenerativeAI } = await import("@google/generative-ai");
+      
+      if (!apiKey || apiKey === "") {
+        throw new Error("API_KEY_MISSING");
+      }
+
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
@@ -100,19 +119,24 @@ async function startServer() {
       analysisCache.set(cacheKey, parsed);
       res.json(parsed);
     } catch (error: any) {
-      console.error("Gemini analysis error:", error.message || error);
+      const errorMsg = error.message || String(error);
+      const isAuthError = errorMsg.includes('API key not valid') || 
+                         errorMsg.includes('API_KEY_INVALID') || 
+                         errorMsg.includes('API_KEY_MISSING');
       
-      const isAuthError = error.message?.includes('API key not valid') || JSON.stringify(error).includes('API_KEY_INVALID');
       if (isAuthError) {
-        console.error("CRÍTICO: GEMINI_API_KEY Inválida ou não configurada corretamente nas Settings.");
+        console.error("\n❌ DIAGNÓSTICO: Falha de Autenticação no Gemini.");
+        console.error("Ação Necessária: Obtenha uma chave em https://aistudio.google.com/app/apikey e adicione em 'Settings -> Environment Variables' com o nome GEMINI_API_KEY.\n");
+      } else {
+        console.error("Gemini analysis error:", errorMsg);
       }
 
-      if (error.message?.includes('429') || error.status === 429) {
+      if (errorMsg.includes('429') || error.status === 429) {
         lastQuotaErrorTime = Date.now();
       }
       res.json({
         title,
-        summary: content.slice(0, 160).split('.').slice(0, 2).join('.') + " (Modo Offline)...",
+        summary: content.slice(0, 160).split('.').slice(0, 2).join('.') + (isAuthError ? " (Erro de Configuração API Key)..." : " (Análise Indisponível)..."),
         sentiment: "Neutro",
         tags: ["Atualidades"]
       });
@@ -164,19 +188,24 @@ async function startServer() {
       analysisCache.set(cacheKey, parsed);
       res.json(parsed);
     } catch (error: any) {
-      console.error("Gemini briefing error:", error.message || error);
+      const errorMsg = error.message || String(error);
+      const isAuthError = errorMsg.includes('API key not valid') || 
+                         errorMsg.includes('API_KEY_INVALID') || 
+                         errorMsg.includes('API_KEY_MISSING');
       
-      const isAuthError = error.message?.includes('API key not valid') || JSON.stringify(error).includes('API_KEY_INVALID');
       if (isAuthError) {
-        console.error("CRÍTICO: GEMINI_API_KEY Inválida ou não configurada corretamente nas Settings.");
+        console.error("\n❌ DIAGNÓSTICO: Falha de Autenticação no Gemini (Briefing).");
+        console.error("Verifique se GEMINI_API_KEY está configurada adequadamente nas Settings.\n");
+      } else {
+        console.error("Gemini briefing error:", errorMsg);
       }
 
-      if (error.message?.includes('429') || error.status === 429) {
+      if (errorMsg.includes('429') || error.status === 429) {
         lastQuotaErrorTime = Date.now();
       }
       res.json({
         outlook: isAuthError 
-          ? "Erro de configuração: Chave de API Inválida (Verifique as Settings do app)." 
+          ? "Erro Crítico: Chave de API Google Gemini Inválida. Verifique as configurações do projeto." 
           : "Não foi possível gerar a análise inteligente no momento.",
         highlights: ["Siga as notícias locais", "Feed principal disponível"],
         recommendation: "Continue acompanhando as notícias em tempo real."
@@ -232,7 +261,8 @@ async function startServer() {
 
     try {
       // CurrentsAPI Integration
-      if (currentsKey && currentsKey !== "") {
+      if (currentsKey && currentsKey.trim() !== "") {
+        console.log(`[News] Tentando buscar notícias reais com a chave fornecida...`);
         try {
           const categoryMap: any = {
             'top': 'general',
@@ -245,8 +275,6 @@ async function startServer() {
             'world': 'world'
           };
 
-          // CurrentsAPI prefere uma única categoria ou formato específico
-          // Se for lista, pegamos a primeira
           const firstCategory = category.toString().split(',')[0].toLowerCase();
           const currentsCategory = categoryMap[firstCategory] || 'general';
           
@@ -258,7 +286,11 @@ async function startServer() {
 
           if (q && q.toString().trim() !== "") params.keywords = q;
 
-          const response = await axios.get("https://api.currentsapi.services/v1/search", { params, timeout: 8000 });
+          const response = await axios.get("https://api.currentsapi.services/v1/search", { 
+            params, 
+            timeout: 8000,
+            validateStatus: (status) => status < 500 // Não lança erro se for 401/403
+          });
 
           if (response.data.status === "ok") {
             const articles = (response.data.news || []).map((article: any) => ({
@@ -282,17 +314,48 @@ async function startServer() {
 
             newsCache.set(cacheKey, responseData);
             return res.json(responseData);
+          } else {
+            console.warn(`[News] API retornou erro: ${response.data.message || 'Erro desconhecido'}`);
           }
         } catch (e: any) {
-          console.warn("CurrentsAPI falhou:", e.message);
+          console.warn(`[News] Erro na requisição à CurrentsAPI: ${e.message}`);
+          if (e.response && e.response.status === 401) {
+            console.error("ERRO CRÍTICO: CURRENTS_API_KEY Inválida nas Settings!");
+          }
         }
       }
 
-      // Se chegar aqui e nada funcionou
-      res.status(500).json({ 
-        error: "Falha ao carregar notícias de todas as fontes.",
-        status: "error"
-      });
+      // Fallback para Mock se a API falhar ou não houver chave
+      console.log(`[News] Usando dados mockados (Fallback ou Sem Chave).`);
+      const mockData = {
+        articles: [
+          {
+            id: "mock1",
+            title: "Avanços na Fusão Nuclear em 2026",
+            summary: "Cientistas alcançaram um marco histórico na produção de energia limpa através da fusão nuclear.",
+            source: "Scientific Alpha",
+            publishedAt: new Date().toISOString(),
+            imageUrl: "https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&q=80&w=1200",
+            sentiment: "Positivo",
+            tags: ["Ciência", "Energia"]
+          },
+          {
+            id: "mock2",
+            title: "Exploração de Marte: Colônia Alpha Estabelecida",
+            summary: "A primeira base humana em Marte reporta sucesso nos sistemas de suporte de vida.",
+            source: "Mars Chronicles",
+            publishedAt: new Date().toISOString(),
+            imageUrl: "https://images.unsplash.com/photo-1614728894747-a83421e2b9c9?auto=format&fit=crop&q=80&w=1200",
+            sentiment: "Positivo",
+            tags: ["Espaço", "Futuro"]
+          }
+        ],
+        totalResults: 2,
+        nextPage: null,
+        provider: "mock-data"
+      };
+      
+      return res.json(mockData);
 
     } catch (error: any) {
       console.error("Erro geral na API News:", error.message);
